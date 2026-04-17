@@ -28,6 +28,16 @@ chmod +x start_all.sh
 
 Use Python 3.12 for this repo. Newer interpreters currently hit missing binary wheels for some dependencies during install. If the script falls back to `venv`, install `python3.12` first or pass `PYTHON=/path/to/python3.12`; frontend startup will still require a working system `node`/`npm` pair unless a conda-style manager is available.
 
+If you want to run frontend commands manually after `start_all.sh` has created the managed conda environment, activate it first from the repo root so `node` and `npm` are available on `PATH`:
+
+```bash
+mamba activate ./.conda-py312
+# or
+conda activate ./.conda-py312
+```
+
+After activation, you can run commands such as `npm install`, `npm run dev`, or `npm run build` inside `frontend/`.
+
 This starts, in order:
 
 1. **Tiled** at `http://127.0.0.1:8010` using `tiled/config.yml` — the repo includes a **committed** SQLite catalog and sample arrays under `.tiled/` so Browse works immediately after clone (no seed step required). See `.tiled/README.md`.
@@ -58,6 +68,7 @@ The backend will be available at http://127.0.0.1:8002. Health check: http://127
 ### 2. Start the Frontend
 
 ```bash
+mamba activate ./.conda-py312   # or: conda activate ./.conda-py312
 cd frontend
 
 # Install Node dependencies (Node 18+)
@@ -66,6 +77,8 @@ npm install
 # Start the Vite dev server
 npm run dev
 ```
+
+Run `npm` commands from `frontend/`, not from the repository root. The frontend package manifest lives at `frontend/package.json`, so running `npm install` from the repo root will fail with `ENOENT` for a missing root `package.json`.
 
 Open http://127.0.0.1:5173 in your browser.
 
