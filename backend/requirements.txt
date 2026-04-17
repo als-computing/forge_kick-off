@@ -1,0 +1,7 @@
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+tiled[all]>=0.1.0
+numpy>=1.24.0
+pillow>=10.0.0
+python-dotenv>=1.0.0
+matplotlib>=3.7.0
