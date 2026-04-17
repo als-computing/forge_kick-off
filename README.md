@@ -34,6 +34,8 @@ This starts, in order:
 2. **Browse API** at `http://127.0.0.1:8002`
 3. **Vite** at `http://127.0.0.1:5173`
 
+The bundled catalog currently contains **five** sample datasets under `browse/generated_data/` (`gen_010005`, `gen_010006`, `gen_010007`, `gen_010011`, `gen_010021`). Add more with `backend/scripts/seed_generated_data_to_tiled.py` and commit updated `.tiled/` if you want them in the repo.
+
 Press **Ctrl+C** to stop all three. Override the Tiled port with `TILED_PORT=8011 ./start_all.sh` if needed (update `backend/.env` accordingly).
 
 ### 1. Start the Backend
