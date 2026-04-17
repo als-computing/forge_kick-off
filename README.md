@@ -19,14 +19,14 @@ frontend/   React + Vite app (port 5173)
 
 ### One command (Tiled + backend + frontend)
 
-From the repo root, use a **project virtualenv** so the `tiled` CLI matches `backend/requirements.txt` (avoids broken global installs):
+From the repo root, `start_all.sh` will bootstrap local runtimes automatically. It prefers `micromamba`, then `mamba`, then `conda`, creating `.conda-py312` with Python 3.12 and Node.js/npm, and falls back to `.venv` plus system Node if no conda-style manager is available.
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r backend/requirements.txt
 chmod +x start_all.sh
 ./start_all.sh
 ```
+
+Use Python 3.12 for this repo. Newer interpreters currently hit missing binary wheels for some dependencies during install. If the script falls back to `venv`, install `python3.12` first or pass `PYTHON=/path/to/python3.12`; frontend startup will still require a system `npm` unless a conda-style manager is available.
 
 This starts, in order:
 
@@ -46,7 +46,7 @@ cd backend
 # Create .env from the example and edit as needed
 cp .env.example .env
 
-# Install Python dependencies (Python 3.10+)
+# Install Python dependencies (Python 3.12)
 pip install -r requirements.txt
 
 # Start the API server
