@@ -10,6 +10,11 @@ BACKEND_DIR="$SCRIPT_DIR/backend"
 FRONTEND_DIR="$SCRIPT_DIR/frontend"
 TILED_CONFIG="$SCRIPT_DIR/tiled/config.yml"
 TILED_PORT="${TILED_PORT:-8010}"
+ENV_DIR=""
+ENV_KIND=""
+CONDA_ENV_DIR="$SCRIPT_DIR/.conda-py312"
+REQUIRED_PYTHON_MAJOR=3
+REQUIRED_PYTHON_MINOR=12
 
 # Colors
 GREEN='\033[0;32m'
@@ -18,22 +23,109 @@ CYAN='\033[0;36m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-# Prefer repo venv Python/tiled if present
-if [ -x "$SCRIPT_DIR/.venv/bin/python" ]; then
-  PYTHON="$SCRIPT_DIR/.venv/bin/python"
-elif [ -x "$BACKEND_DIR/.venv/bin/python" ]; then
-  PYTHON="$BACKEND_DIR/.venv/bin/python"
-else
-  PYTHON="${PYTHON:-python3}"
-fi
+BOOTSTRAP_PYTHON=""
+CONDA_MANAGER=""
+
+python_matches_required() {
+  local python_bin="$1"
+  "$python_bin" -c "import sys; raise SystemExit(0 if sys.version_info[:2] == (${REQUIRED_PYTHON_MAJOR}, ${REQUIRED_PYTHON_MINOR}) else 1)"
+}
+
+find_conda_manager() {
+  if command -v micromamba >/dev/null 2>&1; then
+    CONDA_MANAGER="$(command -v micromamba)"
+  elif command -v mamba >/dev/null 2>&1; then
+    CONDA_MANAGER="$(command -v mamba)"
+  elif command -v conda >/dev/null 2>&1; then
+    CONDA_MANAGER="$(command -v conda)"
+  else
+    CONDA_MANAGER=""
+  fi
+}
+
+select_bootstrap_python() {
+  if [ -n "${PYTHON:-}" ]; then
+    BOOTSTRAP_PYTHON="$PYTHON"
+  elif command -v python3.12 >/dev/null 2>&1; then
+    BOOTSTRAP_PYTHON="$(command -v python3.12)"
+  elif command -v python3 >/dev/null 2>&1; then
+    BOOTSTRAP_PYTHON="$(command -v python3)"
+  elif command -v python >/dev/null 2>&1; then
+    BOOTSTRAP_PYTHON="$(command -v python)"
+  else
+    echo -e "${RED}Error: Python ${REQUIRED_PYTHON_MAJOR}.${REQUIRED_PYTHON_MINOR} is required but no Python interpreter was found.${NC}"
+    exit 1
+  fi
+
+  if ! python_matches_required "$BOOTSTRAP_PYTHON"; then
+    echo -e "${RED}Error: Python ${REQUIRED_PYTHON_MAJOR}.${REQUIRED_PYTHON_MINOR} is required for the venv fallback because newer interpreters currently miss some binary wheels.${NC}"
+    echo -e "${RED}Install python3.12, use micromamba/mamba/conda, or set PYTHON=/path/to/python3.12.${NC}"
+    exit 1
+  fi
+}
+
+ensure_python_version() {
+  local python_bin="$1"
+  local env_label="$2"
+  if ! python_matches_required "$python_bin"; then
+    echo -e "${RED}Error: existing ${env_label} at $ENV_DIR uses $("$python_bin" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")') but ${REQUIRED_PYTHON_MAJOR}.${REQUIRED_PYTHON_MINOR} is required.${NC}"
+    echo -e "${RED}Remove $ENV_DIR and rerun, or let the script create a new managed environment.${NC}"
+    exit 1
+  fi
+}
+
+create_conda_env() {
+  ENV_DIR="$CONDA_ENV_DIR"
+  ENV_KIND="conda"
+  echo -e "${YELLOW}    Creating project conda environment at $ENV_DIR with $(basename "$CONDA_MANAGER")${NC}"
+  "$CONDA_MANAGER" create -y -p "$ENV_DIR" "python=${REQUIRED_PYTHON_MAJOR}.${REQUIRED_PYTHON_MINOR}" pip
+}
+
+create_venv_env() {
+  select_bootstrap_python
+  ENV_DIR="$SCRIPT_DIR/.venv"
+  ENV_KIND="venv"
+  echo -e "${YELLOW}    Creating project virtualenv at $ENV_DIR${NC}"
+  "$BOOTSTRAP_PYTHON" -m venv "$ENV_DIR"
+}
+
+ensure_backend_env() {
+  find_conda_manager
+
+  if [ -x "$CONDA_ENV_DIR/bin/python" ]; then
+    ENV_DIR="$CONDA_ENV_DIR"
+    ENV_KIND="conda"
+  elif [ -x "$SCRIPT_DIR/.venv/bin/python" ]; then
+    ENV_DIR="$SCRIPT_DIR/.venv"
+    ENV_KIND="venv"
+  elif [ -x "$BACKEND_DIR/.venv/bin/python" ]; then
+    ENV_DIR="$BACKEND_DIR/.venv"
+    ENV_KIND="venv"
+  elif [ -n "$CONDA_MANAGER" ]; then
+    create_conda_env
+  else
+    create_venv_env
+  fi
+
+  PYTHON="$ENV_DIR/bin/python"
+  ensure_python_version "$PYTHON" "$ENV_KIND environment"
+  PIP_CMD=("$PYTHON" -m pip)
+
+  if ! "$PYTHON" -c "import tiled, uvicorn" >/dev/null 2>&1; then
+    echo -e "${YELLOW}    Installing backend dependencies into $ENV_DIR${NC}"
+    "${PIP_CMD[@]}" install -r "$BACKEND_DIR/requirements.txt"
+  fi
+}
 
 tiled_cmd() {
-  if [ -x "$SCRIPT_DIR/.venv/bin/tiled" ]; then
-    "$SCRIPT_DIR/.venv/bin/tiled" "$@"
+  if [ -x "$ENV_DIR/bin/tiled" ]; then
+    "$ENV_DIR/bin/tiled" "$@"
   elif command -v tiled &>/dev/null; then
     tiled "$@"
   else
-    "$PYTHON" -m tiled "$@"
+    echo -e "${RED}Error: tiled CLI not found in $ENV_DIR or on PATH.${NC}"
+    echo -e "${RED}Run the script again after environment bootstrap succeeds, or install dependencies into $ENV_DIR.${NC}"
+    exit 1
   fi
 }
 
@@ -46,6 +138,8 @@ cleanup() {
   exit 0
 }
 trap cleanup SIGINT SIGTERM
+
+ensure_backend_env
 
 # ---------------------------------------------------------------------------
 # Load .env — create it from .env.example if missing
@@ -62,7 +156,7 @@ set +a
 
 # Generate a stable API key if TILED_API_KEY is empty or missing
 if [ -z "${TILED_API_KEY:-}" ]; then
-  TILED_API_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+  TILED_API_KEY=$("$PYTHON" -c "import secrets; print(secrets.token_hex(32))")
   # Persist it back into .env so it survives restarts
   if grep -q "^TILED_API_KEY=" "$BACKEND_DIR/.env"; then
     sed -i.bak "s|^TILED_API_KEY=.*|TILED_API_KEY=${TILED_API_KEY}|" "$BACKEND_DIR/.env" && rm -f "$BACKEND_DIR/.env.bak"
@@ -122,11 +216,10 @@ fi
 # ---------------------------------------------------------------------------
 echo -e "${CYAN}==> Starting backend (port 8002)...${NC}"
 
-UVICORN_CMD=(uvicorn)
-if [ -x "$SCRIPT_DIR/.venv/bin/uvicorn" ]; then
-  UVICORN_CMD=("$SCRIPT_DIR/.venv/bin/uvicorn")
-elif ! command -v uvicorn &>/dev/null; then
-  echo -e "${RED}Error: uvicorn not found. Run: python3 -m venv .venv && .venv/bin/pip install -r backend/requirements.txt${NC}"
+UVICORN_CMD=("$ENV_DIR/bin/uvicorn")
+if [ ! -x "${UVICORN_CMD[0]}" ]; then
+  echo -e "${RED}Error: uvicorn not found in $ENV_DIR.${NC}"
+  echo -e "${RED}Run: $PYTHON -m pip install -r backend/requirements.txt${NC}"
   exit 1
 fi
 
