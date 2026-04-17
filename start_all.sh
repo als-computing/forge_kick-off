@@ -10,6 +10,12 @@ BACKEND_DIR="$SCRIPT_DIR/backend"
 FRONTEND_DIR="$SCRIPT_DIR/frontend"
 TILED_CONFIG="$SCRIPT_DIR/tiled/config.yml"
 TILED_PORT="${TILED_PORT:-8010}"
+BACKEND_PORT="${BACKEND_PORT:-8002}"
+FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+RUN_DIR="$SCRIPT_DIR/.run"
+TILED_PID_FILE="$RUN_DIR/tiled.pid"
+BACKEND_PID_FILE="$RUN_DIR/backend.pid"
+FRONTEND_PID_FILE="$RUN_DIR/frontend.pid"
 ENV_DIR=""
 ENV_KIND=""
 CONDA_ENV_DIR="$SCRIPT_DIR/.conda-py312"
@@ -25,6 +31,7 @@ NC='\033[0m'
 
 BOOTSTRAP_PYTHON=""
 CONDA_MANAGER=""
+NPM_CMD=()
 
 python_matches_required() {
   local python_bin="$1"
@@ -41,6 +48,172 @@ find_conda_manager() {
   else
     CONDA_MANAGER=""
   fi
+}
+
+port_is_listening() {
+  local port="$1"
+  "$PYTHON" - "$port" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.settimeout(0.2)
+    raise SystemExit(0 if sock.connect_ex(("127.0.0.1", port)) == 0 else 1)
+PY
+}
+
+require_free_port() {
+  local port="$1"
+  local label="$2"
+  if port_is_listening "$port"; then
+    echo -e "${RED}Error: ${label} port ${port} is already in use on 127.0.0.1.${NC}"
+    echo -e "${RED}Stop the existing process or rerun with a different port.${NC}"
+    exit 1
+  fi
+}
+
+cleanup_pid_file() {
+  local pid_file="$1"
+  rm -f "$pid_file"
+}
+
+stop_managed_process() {
+  local pid_file="$1"
+  local label="$2"
+
+  if [ ! -f "$pid_file" ]; then
+    return
+  fi
+
+  local pid
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+    cleanup_pid_file "$pid_file"
+    return
+  fi
+
+  if kill -0 "$pid" 2>/dev/null; then
+    echo -e "${YELLOW}    Stopping stale ${label} process from previous run (PID ${pid})${NC}"
+    kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+      if ! kill -0 "$pid" 2>/dev/null; then
+        break
+      fi
+      sleep 0.2
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  fi
+
+  cleanup_pid_file "$pid_file"
+}
+
+cleanup_managed_processes() {
+  mkdir -p "$RUN_DIR"
+  stop_managed_process "$FRONTEND_PID_FILE" "frontend"
+  stop_managed_process "$BACKEND_PID_FILE" "backend"
+  stop_managed_process "$TILED_PID_FILE" "Tiled"
+}
+
+get_process_command() {
+  local pid="$1"
+  ps -o command= -p "$pid" 2>/dev/null | sed 's/^[[:space:]]*//'
+}
+
+get_process_cwd() {
+  local pid="$1"
+  if ! command -v lsof >/dev/null 2>&1; then
+    return
+  fi
+
+  lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | while IFS= read -r line; do
+    [[ "$line" == n* ]] || continue
+    printf '%s\n' "${line#n}"
+    break
+  done
+}
+
+find_listener_processes() {
+  local port="$1"
+  if ! command -v lsof >/dev/null 2>&1; then
+    return
+  fi
+
+  lsof -nP -iTCP:"$port" -sTCP:LISTEN -Fp 2>/dev/null | while IFS= read -r line; do
+    [[ "$line" == p* ]] || continue
+    local pid="${line#p}"
+    local cmdline=""
+    local cwd=""
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    cmdline="$(get_process_command "$pid")"
+    cwd="$(get_process_cwd "$pid")"
+    printf '%s\t%s\t%s\n' "$pid" "$cmdline" "$cwd"
+  done
+}
+
+stop_repo_listener_on_port() {
+  local port="$1"
+  local label="$2"
+  local expected_dir="$3"
+  local pattern_a="$4"
+  local pattern_b="$5"
+  local matches=""
+
+  if ! port_is_listening "$port"; then
+    return
+  fi
+
+  matches="$(find_listener_processes "$port")"
+  if [ -z "$matches" ]; then
+    return
+  fi
+
+  while IFS=$'\t' read -r pid cmdline cwd; do
+    [ -n "$pid" ] || continue
+    if ([[ -n "$expected_dir" ]] && [[ "$cwd" == "$expected_dir"* ]]) || [[ "$cmdline" == *"$SCRIPT_DIR"* ]]; then
+      if ([[ -z "$pattern_a" ]] || [[ "$cmdline" == *"$pattern_a"* ]]) && ([[ -z "$pattern_b" ]] || [[ "$cmdline" == *"$pattern_b"* ]]); then
+        echo -e "${YELLOW}    Reclaiming ${label} port ${port} from stale repo process (PID ${pid})${NC}"
+        kill "$pid" 2>/dev/null || true
+        for _ in $(seq 1 20); do
+          if ! kill -0 "$pid" 2>/dev/null; then
+            break
+          fi
+          sleep 0.2
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+          kill -9 "$pid" 2>/dev/null || true
+        fi
+      fi
+    elif [[ "$cmdline" == *"$pattern_a"* ]] && ([[ -z "$pattern_b" ]] || [[ "$cmdline" == *"$pattern_b"* ]]); then
+      echo -e "${YELLOW}    Reclaiming ${label} port ${port} from stale repo process (PID ${pid})${NC}"
+      kill "$pid" 2>/dev/null || true
+      for _ in $(seq 1 20); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+          break
+        fi
+        sleep 0.2
+      done
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+      fi
+    fi
+  done <<< "$matches"
+}
+
+reclaim_orphaned_repo_ports() {
+  if ! command -v lsof >/dev/null 2>&1; then
+    return
+  fi
+  stop_repo_listener_on_port "$FRONTEND_PORT" "frontend" "$FRONTEND_DIR" "vite" ""
+  stop_repo_listener_on_port "$BACKEND_PORT" "backend" "$BACKEND_DIR" "browse_server:app" "uvicorn"
+  stop_repo_listener_on_port "$TILED_PORT" "Tiled" "$SCRIPT_DIR" "$TILED_CONFIG" "tiled"
+}
+
+can_run_npm() {
+  local npm_bin="$1"
+  "$npm_bin" --version >/dev/null 2>&1
 }
 
 select_bootstrap_python() {
@@ -108,6 +281,7 @@ ensure_backend_env() {
   fi
 
   PYTHON="$ENV_DIR/bin/python"
+  export PATH="$ENV_DIR/bin:$PATH"
   ensure_python_version "$PYTHON" "$ENV_KIND environment"
   PIP_CMD=("$PYTHON" -m pip)
 
@@ -115,6 +289,31 @@ ensure_backend_env() {
     echo -e "${YELLOW}    Installing backend dependencies into $ENV_DIR${NC}"
     "${PIP_CMD[@]}" install -r "$BACKEND_DIR/requirements.txt"
   fi
+}
+
+ensure_frontend_runtime() {
+  if [ -x "$ENV_DIR/bin/npm" ] && can_run_npm "$ENV_DIR/bin/npm"; then
+    NPM_CMD=("$ENV_DIR/bin/npm")
+    return
+  fi
+
+  if command -v npm >/dev/null 2>&1 && can_run_npm "$(command -v npm)"; then
+    NPM_CMD=("$(command -v npm)")
+    return
+  fi
+
+  if [ "$ENV_KIND" = "conda" ] && [ -n "$CONDA_MANAGER" ]; then
+    echo -e "${YELLOW}    Installing Node.js/npm into $ENV_DIR with $(basename "$CONDA_MANAGER")${NC}"
+    "$CONDA_MANAGER" install -y -p "$ENV_DIR" "nodejs>=18"
+    if [ -x "$ENV_DIR/bin/npm" ] && can_run_npm "$ENV_DIR/bin/npm"; then
+      NPM_CMD=("$ENV_DIR/bin/npm")
+      return
+    fi
+  fi
+
+  echo -e "${RED}Error: a working npm/node runtime was not found.${NC}"
+  echo -e "${RED}Install Node.js 18+ or rerun with micromamba/mamba/conda available so the script can provision it.${NC}"
+  exit 1
 }
 
 tiled_cmd() {
@@ -134,12 +333,21 @@ cleanup() {
   echo -e "${YELLOW}Shutting down...${NC}"
   kill "$TILED_PID" "$BACKEND_PID" "$FRONTEND_PID" 2>/dev/null || true
   wait "$TILED_PID" "$BACKEND_PID" "$FRONTEND_PID" 2>/dev/null || true
+  cleanup_pid_file "$TILED_PID_FILE"
+  cleanup_pid_file "$BACKEND_PID_FILE"
+  cleanup_pid_file "$FRONTEND_PID_FILE"
   echo -e "${GREEN}Done.${NC}"
   exit 0
 }
 trap cleanup SIGINT SIGTERM
 
 ensure_backend_env
+ensure_frontend_runtime
+cleanup_managed_processes
+reclaim_orphaned_repo_ports
+require_free_port "$TILED_PORT" "Tiled"
+require_free_port "$BACKEND_PORT" "Backend"
+require_free_port "$FRONTEND_PORT" "Frontend"
 
 # ---------------------------------------------------------------------------
 # Load .env — create it from .env.example if missing
@@ -189,6 +397,7 @@ fi
 
 (cd "$SCRIPT_DIR" && TILED_SINGLE_USER_API_KEY="$TILED_API_KEY" tiled_cmd serve config "$TILED_CONFIG" --host 127.0.0.1 --port "$TILED_PORT") &
 TILED_PID=$!
+echo "$TILED_PID" > "$TILED_PID_FILE"
 echo -e "${GREEN}    Tiled PID: $TILED_PID${NC}"
 
 echo -e "${CYAN}    Waiting for Tiled...${NC}"
@@ -214,7 +423,7 @@ fi
 # ---------------------------------------------------------------------------
 # Backend
 # ---------------------------------------------------------------------------
-echo -e "${CYAN}==> Starting backend (port 8002)...${NC}"
+echo -e "${CYAN}==> Starting backend (port ${BACKEND_PORT})...${NC}"
 
 UVICORN_CMD=("$ENV_DIR/bin/uvicorn")
 if [ ! -x "${UVICORN_CMD[0]}" ]; then
@@ -224,14 +433,15 @@ if [ ! -x "${UVICORN_CMD[0]}" ]; then
 fi
 
 cd "$BACKEND_DIR"
-"${UVICORN_CMD[@]}" browse_server:app --host 127.0.0.1 --port 8002 &
+"${UVICORN_CMD[@]}" browse_server:app --host 127.0.0.1 --port "$BACKEND_PORT" &
 BACKEND_PID=$!
+echo "$BACKEND_PID" > "$BACKEND_PID_FILE"
 echo -e "${GREEN}    Backend PID: $BACKEND_PID${NC}"
 
 echo -e "${CYAN}    Waiting for backend...${NC}"
 for i in $(seq 1 20); do
-  if curl -sf http://127.0.0.1:8002/health >/dev/null 2>&1; then
-    echo -e "${GREEN}    Backend ready at http://127.0.0.1:8002${NC}"
+  if curl -sf "http://127.0.0.1:${BACKEND_PORT}/health" >/dev/null 2>&1; then
+    echo -e "${GREEN}    Backend ready at http://127.0.0.1:${BACKEND_PORT}${NC}"
     break
   fi
   if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
@@ -244,17 +454,18 @@ done
 # ---------------------------------------------------------------------------
 # Frontend
 # ---------------------------------------------------------------------------
-echo -e "${CYAN}==> Starting frontend (port 5173)...${NC}"
+echo -e "${CYAN}==> Starting frontend (port ${FRONTEND_PORT})...${NC}"
 
 cd "$FRONTEND_DIR"
 
 if [ ! -d "node_modules" ]; then
   echo -e "${YELLOW}    node_modules not found — running npm install...${NC}"
-  npm install
+  "${NPM_CMD[@]}" install
 fi
 
-npm run dev -- --host 127.0.0.1 &
+"${NPM_CMD[@]}" run dev -- --host 127.0.0.1 --port "$FRONTEND_PORT" &
 FRONTEND_PID=$!
+echo "$FRONTEND_PID" > "$FRONTEND_PID_FILE"
 echo -e "${GREEN}    Frontend PID: $FRONTEND_PID${NC}"
 
 # ---------------------------------------------------------------------------
@@ -264,8 +475,8 @@ echo ""
 echo -e "${GREEN}==========================================${NC}"
 echo -e "${GREEN}  Tiled Browse Hub is running!${NC}"
 echo -e "${GREEN}  Tiled    : http://127.0.0.1:${TILED_PORT}${NC}"
-echo -e "${GREEN}  Frontend : http://127.0.0.1:5173${NC}"
-echo -e "${GREEN}  Backend  : http://127.0.0.1:8002${NC}"
+echo -e "${GREEN}  Frontend : http://127.0.0.1:${FRONTEND_PORT}${NC}"
+echo -e "${GREEN}  Backend  : http://127.0.0.1:${BACKEND_PORT}${NC}"
 echo -e "${GREEN}  Press Ctrl+C to stop all servers.${NC}"
 echo -e "${GREEN}==========================================${NC}"
 echo ""

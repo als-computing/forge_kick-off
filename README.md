@@ -19,14 +19,14 @@ frontend/   React + Vite app (port 5173)
 
 ### One command (Tiled + backend + frontend)
 
-From the repo root, `start_all.sh` will bootstrap local runtimes automatically. It prefers `micromamba`, then `mamba`, then `conda`, creating `.conda-py312` with Python 3.12 and Node.js/npm, and falls back to `.venv` plus system Node if no conda-style manager is available.
+From the repo root, `start_all.sh` will bootstrap local runtimes automatically. It prefers `micromamba`, then `mamba`, then `conda`, creating `.conda-py312` with Python 3.12 and Node.js/npm, and falls back to `.venv` plus a working system Node.js/npm if no conda-style manager is available. The script is intended to run on both Linux and macOS.
 
 ```bash
 chmod +x start_all.sh
 ./start_all.sh
 ```
 
-Use Python 3.12 for this repo. Newer interpreters currently hit missing binary wheels for some dependencies during install. If the script falls back to `venv`, install `python3.12` first or pass `PYTHON=/path/to/python3.12`; frontend startup will still require a system `npm` unless a conda-style manager is available.
+Use Python 3.12 for this repo. Newer interpreters currently hit missing binary wheels for some dependencies during install. If the script falls back to `venv`, install `python3.12` first or pass `PYTHON=/path/to/python3.12`; frontend startup will still require a working system `node`/`npm` pair unless a conda-style manager is available.
 
 This starts, in order:
 
@@ -36,7 +36,7 @@ This starts, in order:
 
 The bundled catalog currently contains **five** sample datasets under `browse/generated_data/` (`gen_010005`, `gen_010006`, `gen_010007`, `gen_010011`, `gen_010021`). Add more with `backend/scripts/seed_generated_data_to_tiled.py` and commit updated `.tiled/` if you want them in the repo.
 
-Press **Ctrl+C** to stop all three. Override the Tiled port with `TILED_PORT=8011 ./start_all.sh` if needed (update `backend/.env` accordingly).
+The script fails fast if ports are already occupied, instead of attaching to unrelated processes that happen to already be listening. When `lsof` is available, it will also reclaim stale listeners left behind by previous runs on both Linux and macOS. Press **Ctrl+C** to stop all three. Override ports as needed, for example `TILED_PORT=8011 BACKEND_PORT=8003 FRONTEND_PORT=5174 ./start_all.sh`.
 
 ### 1. Start the Backend
 
