@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { RouteItem } from '@/types/navigationRouterTypes';
 import { cn } from '@/lib/utils';
-import Button from '@/components/Button';
 
 export type TabSelectorPageProps = {
   routes: RouteItem[];
@@ -98,7 +97,8 @@ export default function TabSelectorPage({ routes, onStart, initialSelected }: Ta
           <div className="text-sky-200 text-sm">
             {selected.size} {selected.size === 1 ? 'tab' : 'tabs'} selected
           </div>
-          <Button
+          <button
+            type="button"
             onClick={handleStart}
             disabled={selected.size === 0}
             className={cn(
@@ -109,7 +109,7 @@ export default function TabSelectorPage({ routes, onStart, initialSelected }: Ta
             )}
           >
             Start Hub
-          </Button>
+          </button>
         </div>
 
         {selected.size === 0 && (

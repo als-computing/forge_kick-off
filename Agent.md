@@ -58,9 +58,12 @@ __pycache__/
 .venv/
 node_modules/
 dist/
-.tiled/
 .DS_Store
 ```
+
+**This repository:** `.tiled/` (SQLite catalog + `writable_storage` data) **is committed**
+so contributors get demo Browse data after `git clone` without seeding. Do not add
+`.tiled/` to `.gitignore` here unless you intentionally stop tracking the bundled snapshot.
 
 ✅ **Checkpoint:** `git status` shows only tracked scaffold files, `.env` is absent.
 

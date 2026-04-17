@@ -61,11 +61,17 @@ def _ensure_container(parent, key: str, metadata: dict | None = None):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Seed Tiled with generated_data PNG+JSON pairs.")
+    default_source = os.environ.get("SEED_GENERATED_DATA_DIR") or str(
+        (_BACKEND_DIR.parent / "generated_data").resolve()
+    )
     parser.add_argument(
         "--source",
         type=Path,
-        default=Path(os.environ.get("SEED_GENERATED_DATA_DIR", "/Users/ahexemer/Desktop/generated_data")),
-        help="Root folder to scan for *.png with matching *.txt JSON sidecars",
+        default=Path(default_source),
+        help=(
+            "Root folder to scan for *.png with matching *.txt JSON sidecars "
+            "(default: <repo>/generated_data, override with SEED_GENERATED_DATA_DIR)"
+        ),
     )
     parser.add_argument("--limit", type=int, default=5, help="Max number of datasets to upload")
     parser.add_argument(

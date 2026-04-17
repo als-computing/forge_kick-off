@@ -30,7 +30,7 @@ chmod +x start_all.sh
 
 This starts, in order:
 
-1. **Tiled** at `http://127.0.0.1:8010` using `tiled/config.yml` (SQLite catalog under `.tiled/`, CORS for the Vite dev origin)
+1. **Tiled** at `http://127.0.0.1:8010` using `tiled/config.yml` — the repo includes a **committed** SQLite catalog and sample arrays under `.tiled/` so Browse works immediately after clone (no seed step required). See `.tiled/README.md`.
 2. **Browse API** at `http://127.0.0.1:8002`
 3. **Vite** at `http://127.0.0.1:5173`
 

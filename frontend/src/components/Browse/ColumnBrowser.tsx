@@ -1,249 +1,179 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Plus, ArrowsClockwise, File, CheckSquare, Square, CloudArrowUp } from '@phosphor-icons/react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowsClockwise, CheckSquare, CloudArrowUp, Plus } from '@phosphor-icons/react';
 import BrowseColumn from './BrowseColumn';
 import BrowseDetailPanel from './BrowseDetailPanel';
+import ItemsColumn from './ItemsColumn';
 import ResizeDivider from './ResizeDivider';
-import type { BrowseItem } from './hooks/useBrowseData';
-import { useBrowseData } from './hooks/useBrowseData';
-import { useGIWAXSStore } from '@/stores/giwaxsStore';
+import { useBrowseData, type BrowseItem } from './hooks/useBrowseData';
+import { useBrowseStore, type StagedItem } from '@/stores/browseStore';
 
 interface ColumnBrowserProps {
   serverUri: string;
   technique: string;
   serverApiKey?: string;
-  /** Optional client-side filter: given a Tiled path, return true to include it */
-  splashPathFilter?: ((path: string) => boolean) | null;
 }
 
 const DEFAULT_COLUMN_WIDTH = 220;
 const DEFAULT_ITEMS_WIDTH = 260;
+const SAMPLE_NAME_COLUMN_WIDTH = 190;
+const INITIAL_COLUMN_COUNT = 5;
+const STAGED_MESSAGE_DURATION_MS = 3500;
 
-export default function ColumnBrowser({ serverUri, technique, serverApiKey, splashPathFilter }: ColumnBrowserProps) {
+export default function ColumnBrowser({ serverUri, technique, serverApiKey }: ColumnBrowserProps) {
   const { state, actions } = useBrowseData(serverUri, technique, serverApiKey);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Resizable column widths: one per metadata column, plus one for the Samples column
   const [columnWidths, setColumnWidths] = useState<number[]>([]);
   const [itemsColumnWidth, setItemsColumnWidth] = useState(DEFAULT_ITEMS_WIDTH);
-
-  // Multi-select: set of item paths currently checked
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
-  // Brief confirmation message after staging
   const [stagedMsg, setStagedMsg] = useState<string | null>(null);
 
-  const setStagedItems = useGIWAXSStore(s => s.setStagedDataItems);
-  const stagedItems   = useGIWAXSStore(s => s.stagedDataItems);
-  const setMetadataDisplayKeys = useGIWAXSStore(s => s.setMetadataDisplayKeys);
+  const setStagedItems = useBrowseStore((s) => s.setStagedItems);
+  const stagedItems = useBrowseStore((s) => s.stagedItems);
+  const setMetadataDisplayKeys = useBrowseStore((s) => s.setMetadataDisplayKeys);
 
-  // Keep columnWidths in sync with number of columns
-  // Give the first column extra width when it's sample_name (IDs are ~8 chars)
+  // Keep columnWidths in sync with the number of columns.
   useEffect(() => {
-    const n = state.columns.length;
-    setColumnWidths(prev => {
+    setColumnWidths((prev) => {
+      const n = state.columns.length;
       if (prev.length === n) return prev;
-      if (prev.length < n) {
-        const additions = Array.from({ length: n - prev.length }, (_, i) => {
-          const colIndex = prev.length + i;
-          const field = state.columns[colIndex]?.field;
-          return field === 'sample_name' ? 190 : DEFAULT_COLUMN_WIDTH;
-        });
-        return [...prev, ...additions];
-      }
-      return prev.slice(0, n);
+      if (prev.length > n) return prev.slice(0, n);
+      const additions = Array.from({ length: n - prev.length }, (_, i) => {
+        const field = state.columns[prev.length + i]?.field;
+        return field === 'sample_name' ? SAMPLE_NAME_COLUMN_WIDTH : DEFAULT_COLUMN_WIDTH;
+      });
+      return [...prev, ...additions];
     });
-  }, [state.columns.length, state.columns]);
+  }, [state.columns]);
 
-  // Clear selection when the items list changes
   useEffect(() => {
     setSelectedPaths(new Set());
   }, [state.items]);
 
-  const handleResizeColumn = useCallback((index: number, newWidth: number) => {
-    setColumnWidths(prev => {
-      const next = [...prev];
-      if (index >= 0 && index < next.length) next[index] = newWidth;
-      return next;
-    });
-  }, []);
-
-  const handleResizeItemsColumn = useCallback((newWidth: number) => {
-    setItemsColumnWidth(newWidth);
-  }, []);
-
-  // When columns are added, scroll the container to the right
+  // Auto-scroll to the newest column when columns are added.
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
     }
   }, [state.columns.length]);
 
-  // Auto-populate with default columns on first load
+  // First-load: populate with the first few discovered facets.
   const initialised = useRef(false);
   useEffect(() => {
-    if (!initialised.current && state.facets.length > 0) {
-      initialised.current = true;
-      const n = Math.min(5, state.facets.length);
-      state.facets.slice(0, n).forEach(f => actions.addColumn(f));
-    }
+    if (initialised.current || state.facets.length === 0) return;
+    initialised.current = true;
+    const n = Math.min(INITIAL_COLUMN_COUNT, state.facets.length);
+    state.facets.slice(0, n).forEach((f) => actions.addColumn(f));
   }, [state.facets, actions]);
 
-  // Publish selected column keys to the store whenever columns change
+  // Publish current column fields for other tabs that mirror the selection.
   useEffect(() => {
-    const keys = state.columns.map(col => col.field);
-    setMetadataDisplayKeys(keys);
+    setMetadataDisplayKeys(state.columns.map((col) => col.field));
   }, [state.columns, setMetadataDisplayKeys]);
 
-  const handleAddColumn = () => {
-    const usedFields = new Set(state.columns.map(c => c.field));
-    const next = state.facets.find(f => !usedFields.has(f));
-    if (next) actions.addColumn(next);
-  };
+  const handleResizeColumn = useCallback((index: number, newWidth: number) => {
+    setColumnWidths((prev) => {
+      if (index < 0 || index >= prev.length) return prev;
+      const next = [...prev];
+      next[index] = newWidth;
+      return next;
+    });
+  }, []);
 
-  // Selection helpers
+  const handleAddColumn = useCallback(() => {
+    const used = new Set(state.columns.map((c) => c.field));
+    const next = state.facets.find((f) => !used.has(f));
+    if (next) actions.addColumn(next);
+  }, [state.columns, state.facets, actions]);
+
   const togglePath = useCallback((path: string) => {
-    setSelectedPaths(prev => {
+    setSelectedPaths((prev) => {
       const next = new Set(prev);
-      if (next.has(path)) next.delete(path); else next.add(path);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
       return next;
     });
   }, []);
 
   const selectAll = useCallback(() => {
-    setSelectedPaths(new Set(state.items.map(i => i.path)));
+    setSelectedPaths(new Set(state.items.map((i) => i.path)));
   }, [state.items]);
 
-  const clearSelection = useCallback(() => {
-    setSelectedPaths(new Set());
-  }, []);
+  const clearSelection = useCallback(() => setSelectedPaths(new Set()), []);
 
-  // Stage the selected items into giwaxsStore
   const stageSelected = useCallback(() => {
-    const toAdd = state.items
-      .filter(item => selectedPaths.has(item.path))
-      .filter(item => !stagedItems.some(s => s.tiledId === item.path))
-      .map(item => ({
+    const stagedIds = new Set(stagedItems.map((s) => s.tiledId));
+    const toAdd: StagedItem[] = state.items
+      .filter((item) => selectedPaths.has(item.path) && !stagedIds.has(item.path))
+      .map((item) => ({
         id: `browse-${item.path}-${Date.now()}`,
-        name: String(item.metadata['sample_name'] || item.sample),
-        source: 'tiled' as const,
+        name: String(item.metadata.sample_name ?? item.sample),
+        source: 'tiled',
         tiledId: item.path,
         tiledUri: serverUri || undefined,
         tiledApiKey: serverApiKey || undefined,
         metadata: {
-          sample_name: String(item.metadata['sample_name'] || item.sample),
-          bar: typeof item.metadata['bar'] === 'number' ? item.metadata['bar'] as number : undefined,
-          sample_folder: item.metadata['sample_folder'] as string | undefined,
-          beamline: item.metadata['beamline'] as string | undefined,
+          sample_name: String(item.metadata.sample_name ?? item.sample),
+          bar: typeof item.metadata.bar === 'number' ? item.metadata.bar : undefined,
+          sample_folder: item.metadata.sample_folder as string | undefined,
+          beamline: item.metadata.beamline as string | undefined,
         },
       }));
 
     if (toAdd.length === 0) return;
-
     setStagedItems([...stagedItems, ...toAdd]);
-    const msg = toAdd.length === 1
-      ? `"${toAdd[0].name}" added to GIWAXS staging`
-      : `${toAdd.length} scans added to GIWAXS staging`;
+
+    const msg =
+      toAdd.length === 1
+        ? `"${toAdd[0].name}" added to staging`
+        : `${toAdd.length} scans added to staging`;
     setStagedMsg(msg);
     setSelectedPaths(new Set());
-    setTimeout(() => setStagedMsg(null), 3500);
+    setTimeout(() => setStagedMsg(null), STAGED_MESSAGE_DURATION_MS);
   }, [state.items, selectedPaths, stagedItems, setStagedItems, serverUri, serverApiKey]);
 
-  const allFilters: Record<string, string> = {};
-  state.columns.forEach(col => {
-    if (col.selected !== null) allFilters[col.field] = col.selected;
-  });
-  const hasAnySelection = Object.keys(allFilters).length > 0;
-  // Show the Samples column as soon as the last column has a value selected
-  // (the user doesn't need to select a value in every column)
-  const lastCol = state.columns[state.columns.length - 1];
-  const showItems = state.columns.length > 0 && lastCol?.selected !== null;
+  const activeFilters = useMemo(() => {
+    const out: Record<string, string> = {};
+    state.columns.forEach((col) => {
+      if (col.selected !== null) out[col.field] = col.selected;
+    });
+    return out;
+  }, [state.columns]);
+
+  const activeFilterCount = Object.keys(activeFilters).length;
+  const lastColumn = state.columns[state.columns.length - 1];
+  const showItems = state.columns.length > 0 && lastColumn?.selected !== null;
 
   return (
-    <div className="flex flex-col h-full" style={{ background: '#0f172a', color: '#e2e8f0' }}>
-      {/* Toolbar */}
-      <div
-        className="flex items-center gap-3 px-4 py-2 border-b shrink-0"
-        style={{ borderColor: '#334155', background: '#1e293b' }}
-      >
-        <span className="text-sm font-semibold" style={{ color: '#94a3b8' }}>
-          Metadata Browser
-        </span>
+    <div className="flex flex-col h-full bg-slate-900 text-slate-200">
+      <Toolbar
+        facetsLoading={state.facetsLoading}
+        facetCount={state.facets.length}
+        activeFilterCount={activeFilterCount}
+        selectedCount={selectedPaths.size}
+        onStage={stageSelected}
+        onRefresh={actions.refresh}
+        onAddColumn={handleAddColumn}
+      />
 
-        {state.facetsLoading && (
-          <span className="text-xs" style={{ color: '#64748b' }}>Loading fields…</span>
-        )}
-
-        <div className="flex items-center gap-1 ml-auto">
-          {hasAnySelection && (
-            <span className="text-xs px-2 py-0.5 rounded" style={{ background: '#1e3a5f', color: '#93c5fd' }}>
-              {Object.keys(allFilters).length} filter{Object.keys(allFilters).length !== 1 ? 's' : ''} active
-            </span>
-          )}
-
-          {/* Stage button – only visible when items are checked */}
-          {selectedPaths.size > 0 && (
-            <button
-              onClick={stageSelected}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors"
-              style={{ background: '#166534', color: '#86efac', border: '1px solid #15803d' }}
-              title="Add selected scans to GIWAXS staging area"
-            >
-              <CloudArrowUp size={13} />
-              Stage {selectedPaths.size}
-            </button>
-          )}
-
-          <button
-            onClick={actions.refresh}
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-slate-700 transition-colors"
-            style={{ color: '#64748b' }}
-            title="Refresh"
-          >
-            <ArrowsClockwise size={13} />
-          </button>
-          <button
-            onClick={handleAddColumn}
-            disabled={state.facetsLoading || state.facets.length === 0}
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors disabled:opacity-40"
-            style={{ background: '#1d4ed8', color: '#fff' }}
-          >
-            <Plus size={12} />
-            Add column
-          </button>
-        </div>
-      </div>
-
-      {/* Confirmation banner */}
       {stagedMsg && (
-        <div
-          className="shrink-0 px-4 py-1.5 text-xs font-medium border-b flex items-center gap-2"
-          style={{ background: '#14532d', color: '#86efac', borderColor: '#166534' }}
-        >
+        <div className="shrink-0 px-4 py-1.5 text-xs font-medium border-b border-green-800 bg-green-950 text-green-300 flex items-center gap-2">
           <CheckSquare size={13} weight="fill" />
-          {stagedMsg} — switch to the <strong className="mx-0.5">GIWAXS</strong> tab → Select Data to view.
+          {stagedMsg}
         </div>
       )}
 
-      {/* Connection error banner */}
       {state.connectionStatus === 'disconnected' && (
-        <div
-          className="shrink-0 px-4 py-2 text-xs border-b"
-          style={{ background: '#450a0a', color: '#fca5a5', borderColor: '#7f1d1d' }}
-        >
+        <div className="shrink-0 px-4 py-2 text-xs border-b border-red-900 bg-red-950/80 text-red-300">
           Cannot reach the API server. Make sure the backend (port 8002) and Tiled server are running.
         </div>
       )}
 
-      {/* Main browser area */}
       <div className="flex flex-1 min-h-0">
-        {/* Columns scroll container */}
-        <div
-          ref={scrollRef}
-          className="flex flex-1 overflow-x-auto overflow-y-hidden"
-          style={{ minWidth: 0 }}
-        >
+        <div ref={scrollRef} className="flex flex-1 overflow-x-auto overflow-y-hidden min-w-0">
           {state.columns.length === 0 && !state.facetsLoading && (
             <div className="flex items-center justify-center flex-1">
-              <p className="text-sm" style={{ color: '#64748b' }}>
+              <p className="text-sm text-slate-500">
                 {state.connectionStatus === 'disconnected'
                   ? 'Connect to a Tiled server to browse.'
                   : 'Click "Add column" to start browsing.'}
@@ -265,23 +195,22 @@ export default function ColumnBrowser({ serverUri, technique, serverApiKey, spla
               />
               <ResizeDivider
                 currentWidth={columnWidths[i] ?? DEFAULT_COLUMN_WIDTH}
-                onResize={w => handleResizeColumn(i, w)}
+                onResize={(w) => handleResizeColumn(i, w)}
               />
             </React.Fragment>
           ))}
 
-          {/* Items column */}
           {showItems && (
             <>
               <ResizeDivider
                 key="resize-items"
                 currentWidth={itemsColumnWidth}
-                onResize={handleResizeItemsColumn}
+                onResize={setItemsColumnWidth}
                 resizeRight
               />
               <ItemsColumn
-                items={splashPathFilter ? state.items.filter(i => splashPathFilter(i.path)) : state.items}
-                total={splashPathFilter ? state.items.filter(i => splashPathFilter(i.path)).length : state.itemsTotal}
+                items={state.items}
+                total={state.itemsTotal}
                 loading={state.itemsLoading}
                 selectedItem={state.selectedItem}
                 onSelect={actions.selectItem}
@@ -295,178 +224,114 @@ export default function ColumnBrowser({ serverUri, technique, serverApiKey, spla
           )}
         </div>
 
-        {/* Detail panel */}
-        <div
-          className="flex flex-col h-full border-l shrink-0"
-          style={{
-            width: state.selectedItem ? 360 : 280,
-            minWidth: 200,
-            background: '#0f172a',
-            borderColor: '#334155',
-          }}
-        >
-          {state.selectedItem ? (
-            <BrowseDetailPanel
-              item={state.selectedItem}
-              onClose={() => actions.selectItem(null)}
-              serverUri={serverUri}
-              serverApiKey={serverApiKey}
-            />
-          ) : (
-            <div className="flex flex-1 flex-col items-center justify-center px-4 py-8 text-center">
-              <p className="text-sm font-medium" style={{ color: '#94a3b8' }}>
-                Metadata
-              </p>
-              <p className="text-xs mt-2" style={{ color: '#64748b' }}>
-                Select a sample in the list to view its metadata here.
-              </p>
-            </div>
-          )}
-        </div>
+        <DetailPanelSlot
+          item={state.selectedItem}
+          onClose={() => actions.selectItem(null)}
+          serverUri={serverUri}
+          serverApiKey={serverApiKey}
+        />
       </div>
     </div>
   );
 }
 
-// ------------------------------------------------------------------
-// Items column (leaf results)
-// ------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 
-interface ItemsColumnProps {
-  items: BrowseItem[];
-  total: number;
-  loading: boolean;
-  selectedItem: BrowseItem | null;
-  onSelect: (item: BrowseItem | null) => void;
-  width: number;
-  checkedPaths: Set<string>;
-  onToggleCheck: (path: string) => void;
-  onSelectAll: () => void;
-  onClearAll: () => void;
+interface ToolbarProps {
+  facetsLoading: boolean;
+  facetCount: number;
+  activeFilterCount: number;
+  selectedCount: number;
+  onStage: () => void;
+  onRefresh: () => void;
+  onAddColumn: () => void;
 }
 
-function ItemsColumn({
-  items, total, loading, selectedItem, onSelect, width,
-  checkedPaths, onToggleCheck, onSelectAll, onClearAll,
-}: ItemsColumnProps) {
-  const allChecked = items.length > 0 && items.every(i => checkedPaths.has(i.path));
-  const someChecked = checkedPaths.size > 0 && !allChecked;
-
+function Toolbar({
+  facetsLoading,
+  facetCount,
+  activeFilterCount,
+  selectedCount,
+  onStage,
+  onRefresh,
+  onAddColumn,
+}: ToolbarProps) {
   return (
-    <div
-      className="flex flex-col border-r"
-      style={{
-        minWidth: 120,
-        width,
-        maxWidth: 600,
-        background: '#1e293b',
-        borderColor: '#334155',
-        flexShrink: 0,
-      }}
-    >
-      {/* Column header */}
-      <div
-        className="px-3 py-2 border-b flex items-center gap-2"
-        style={{ borderColor: '#334155', background: '#0f172a' }}
-      >
-        {/* Select-all checkbox */}
-        <button
-          onClick={allChecked ? onClearAll : onSelectAll}
-          className="shrink-0 p-0.5 rounded hover:bg-slate-700 transition-colors"
-          title={allChecked ? 'Deselect all' : 'Select all'}
-          style={{ color: someChecked || allChecked ? '#3b82f6' : '#475569' }}
-        >
-          {allChecked ? (
-            <CheckSquare size={14} weight="fill" />
-          ) : someChecked ? (
-            <CheckSquare size={14} />
-          ) : (
-            <Square size={14} />
-          )}
-        </button>
+    <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-700 bg-slate-800 shrink-0">
+      <span className="text-sm font-semibold text-slate-400">Metadata Browser</span>
+      {facetsLoading && <span className="text-xs text-slate-500">Loading fields…</span>}
 
-        <File size={13} style={{ color: '#3b82f6' }} />
-        <span className="text-xs font-semibold" style={{ color: '#94a3b8' }}>
-          Samples
-        </span>
-        {!loading && (
-          <span
-            className="ml-auto text-xs px-1.5 py-0.5 rounded-full font-mono"
-            style={{ background: '#1e293b', color: '#64748b', fontSize: 10 }}
-          >
-            {checkedPaths.size > 0 ? `${checkedPaths.size}/${total}` : total}
+      <div className="flex items-center gap-1 ml-auto">
+        {activeFilterCount > 0 && (
+          <span className="text-xs px-2 py-0.5 rounded bg-blue-950 text-blue-300">
+            {activeFilterCount} filter{activeFilterCount !== 1 ? 's' : ''} active
           </span>
         )}
-      </div>
 
-      <div className="flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
-        {loading && (
-          <div className="flex items-center justify-center py-8">
-            <span className="text-xs" style={{ color: '#64748b' }}>Loading…</span>
-          </div>
+        {selectedCount > 0 && (
+          <button
+            type="button"
+            onClick={onStage}
+            title="Add selected scans to the staging area"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors bg-green-900 text-green-300 border border-green-700 hover:bg-green-800"
+          >
+            <CloudArrowUp size={13} />
+            Stage {selectedCount}
+          </button>
         )}
-        {!loading && items.length === 0 && (
-          <div className="px-3 py-3">
-            <p className="text-xs" style={{ color: '#64748b' }}>No matching samples</p>
-          </div>
-        )}
-        {!loading && items.map((item: BrowseItem) => {
-          const isSelected = selectedItem?.path === item.path;
-          const isChecked = checkedPaths.has(item.path);
-          return (
-            <div
-              key={item.path}
-              className="flex items-start transition-colors"
-              style={{
-                background: isSelected ? '#1d4ed8' : isChecked ? '#1e3a5f' : 'transparent',
-                borderBottom: '1px solid #1e293b',
-              }}
-              onMouseEnter={e => {
-                if (!isSelected && !isChecked)
-                  (e.currentTarget as HTMLDivElement).style.background = '#334155';
-              }}
-              onMouseLeave={e => {
-                if (!isSelected)
-                  (e.currentTarget as HTMLDivElement).style.background =
-                    isChecked ? '#1e3a5f' : 'transparent';
-              }}
-            >
-              {/* Checkbox */}
-              <button
-                onClick={() => onToggleCheck(item.path)}
-                className="shrink-0 pl-2 pr-1 py-2 self-center"
-                title={isChecked ? 'Deselect' : 'Select for staging'}
-                style={{ color: isChecked ? '#3b82f6' : isSelected ? 'rgba(255,255,255,0.5)' : '#475569' }}
-              >
-                {isChecked
-                  ? <CheckSquare size={13} weight="fill" />
-                  : <Square size={13} />}
-              </button>
 
-              {/* Name / click to open detail */}
-              <button
-                onClick={() => onSelect(isSelected ? null : item)}
-                className="flex-1 flex flex-col px-2 py-1.5 text-left min-w-0"
-              >
-                <span
-                  className="text-xs font-medium truncate"
-                  style={{ color: isSelected ? '#fff' : '#e2e8f0' }}
-                >
-                  {item.sample}
-                </span>
-                {item.metadata['angle_id'] != null && (
-                  <span
-                    className="text-xs truncate"
-                    style={{ color: isSelected ? 'rgba(255,255,255,0.7)' : '#64748b' }}
-                  >
-                    {String(item.metadata['angle_id'])}
-                  </span>
-                )}
-              </button>
-            </div>
-          );
-        })}
+        <button
+          type="button"
+          onClick={onRefresh}
+          title="Refresh"
+          className="flex items-center gap-1 px-2 py-1 rounded text-xs text-slate-500 hover:bg-slate-700 transition-colors"
+        >
+          <ArrowsClockwise size={13} />
+        </button>
+        <button
+          type="button"
+          onClick={onAddColumn}
+          disabled={facetsLoading || facetCount === 0}
+          className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-blue-700 text-white transition-colors disabled:opacity-40 hover:bg-blue-600"
+        >
+          <Plus size={12} />
+          Add column
+        </button>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+interface DetailPanelSlotProps {
+  item: BrowseItem | null;
+  onClose: () => void;
+  serverUri: string;
+  serverApiKey?: string;
+}
+
+function DetailPanelSlot({ item, onClose, serverUri, serverApiKey }: DetailPanelSlotProps) {
+  return (
+    <div
+      className="flex flex-col h-full border-l border-slate-700 bg-slate-900 shrink-0"
+      style={{ width: item ? 360 : 280, minWidth: 200 }}
+    >
+      {item ? (
+        <BrowseDetailPanel
+          item={item}
+          onClose={onClose}
+          serverUri={serverUri}
+          serverApiKey={serverApiKey}
+        />
+      ) : (
+        <div className="flex flex-1 flex-col items-center justify-center px-4 py-8 text-center">
+          <p className="text-sm font-medium text-slate-400">Metadata</p>
+          <p className="text-xs mt-2 text-slate-500">
+            Select a sample in the list to view its metadata here.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
