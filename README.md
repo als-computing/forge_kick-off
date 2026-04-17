@@ -19,14 +19,24 @@ frontend/   React + Vite app (port 5173)
 
 ### One command (Tiled + backend + frontend)
 
-From the repo root, use a **project virtualenv** so the `tiled` CLI matches `backend/requirements.txt` (avoids broken global installs):
+From the repo root, `start_all.sh` will bootstrap local runtimes automatically. It prefers `micromamba`, then `mamba`, then `conda`, creating `.conda-py312` with Python 3.12 and Node.js/npm, and falls back to `.venv` plus a working system Node.js/npm if no conda-style manager is available. The script is intended to run on both Linux and macOS.
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r backend/requirements.txt
 chmod +x start_all.sh
 ./start_all.sh
 ```
+
+Use Python 3.12 for this repo. Newer interpreters currently hit missing binary wheels for some dependencies during install. If the script falls back to `venv`, install `python3.12` first or pass `PYTHON=/path/to/python3.12`; frontend startup will still require a working system `node`/`npm` pair unless a conda-style manager is available.
+
+If you want to run frontend commands manually after `start_all.sh` has created the managed conda environment, activate it first from the repo root so `node` and `npm` are available on `PATH`:
+
+```bash
+mamba activate ./.conda-py312
+# or
+conda activate ./.conda-py312
+```
+
+After activation, you can run commands such as `npm install`, `npm run dev`, or `npm run build` inside `frontend/`.
 
 This starts, in order:
 
@@ -36,7 +46,7 @@ This starts, in order:
 
 The bundled catalog currently contains **five** sample datasets under `browse/generated_data/` (`gen_010005`, `gen_010006`, `gen_010007`, `gen_010011`, `gen_010021`). Add more with `backend/scripts/seed_generated_data_to_tiled.py` and commit updated `.tiled/` if you want them in the repo.
 
-Press **Ctrl+C** to stop all three. Override the Tiled port with `TILED_PORT=8011 ./start_all.sh` if needed (update `backend/.env` accordingly).
+The script fails fast if ports are already occupied, instead of attaching to unrelated processes that happen to already be listening. When `lsof` is available, it will also reclaim stale listeners left behind by previous runs on both Linux and macOS. Press **Ctrl+C** to stop all three. Override ports as needed, for example `TILED_PORT=8011 BACKEND_PORT=8003 FRONTEND_PORT=5174 ./start_all.sh`.
 
 ### 1. Start the Backend
 
@@ -46,7 +56,7 @@ cd backend
 # Create .env from the example and edit as needed
 cp .env.example .env
 
-# Install Python dependencies (Python 3.10+)
+# Install Python dependencies (Python 3.12)
 pip install -r requirements.txt
 
 # Start the API server
@@ -58,6 +68,7 @@ The backend will be available at http://127.0.0.1:8002. Health check: http://127
 ### 2. Start the Frontend
 
 ```bash
+mamba activate ./.conda-py312   # or: conda activate ./.conda-py312
 cd frontend
 
 # Install Node dependencies (Node 18+)
@@ -66,6 +77,8 @@ npm install
 # Start the Vite dev server
 npm run dev
 ```
+
+Run `npm` commands from `frontend/`, not from the repository root. The frontend package manifest lives at `frontend/package.json`, so running `npm install` from the repo root will fail with `ENOENT` for a missing root `package.json`.
 
 Open http://127.0.0.1:5173 in your browser.
 
