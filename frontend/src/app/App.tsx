@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, useLocation, Navigate } from 'react-router-dom';
+import { useNavigate, useLocation, Navigate } from 'react-router';
 import './App.css';
 import HubAppLayout from '@/components/HubAppLayout';
 import TabSelectorPage from './pages/TabSelectorPage';

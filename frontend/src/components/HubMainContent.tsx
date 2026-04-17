@@ -1,4 +1,4 @@
-import { Routes, Route, useNavigate, useLocation } from "react-router-dom";
+import { Routes, Route, useNavigate, useLocation } from "react-router";
 import { cn } from "@/lib/utils";
 
 import { RouteItem } from "@/types/navigationRouterTypes";
