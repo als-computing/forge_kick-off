@@ -64,7 +64,11 @@ def build_field_mapping(container_node: Any) -> FieldMapping:
             if idx >= _SCAN_MAX_SAMPLES:
                 break
 
-            combined_keys = _combined_metadata_keys(container_node[first_key])
+            try:
+                combined_keys = _combined_metadata_keys(container_node[first_key])
+            except Exception:
+                # Skip samples that error during lazy open (e.g. bad array payloads).
+                continue
             last_combined = combined_keys
 
             if _is_rich_enough(combined_keys):
@@ -92,20 +96,16 @@ def build_field_mapping(container_node: Any) -> FieldMapping:
 
 
 def _combined_metadata_keys(first_item: Any) -> list[str]:
-    """Return the union of container-level keys and first-array-child keys."""
+    """Return metadata keys present on the sample/container node.
+
+    We intentionally do **not** open the first array child to merge keys: in
+    Tiled, subscripting an array often issues a slice read that can fail with
+    HTTP 500 and long client-side retries, which blocks facet discovery for
+    tens of seconds. Array-only fields are still handled elsewhere via
+    :data:`browse_helpers._ARRAY_ONLY_RAW_KEYS` and the items search path.
+    """
     item_meta = getattr(first_item, "metadata", {}) or {}
-    combined: list[str] = list(getattr(item_meta, "keys", lambda: [])())
-
-    try:
-        first_child_key = next(iter(first_item))
-        child_meta = first_item[first_child_key].metadata
-        for k in child_meta:
-            if k not in combined:
-                combined.append(k)
-    except (StopIteration, KeyError, TypeError):
-        pass
-
-    return combined
+    return list(getattr(item_meta, "keys", lambda: [])())
 
 
 def _is_rich_enough(keys: list[str]) -> bool:

@@ -15,7 +15,8 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      host: "127.0.0.1",
+      // Listen on all interfaces so both http://127.0.0.1:5173 and http://localhost:5173 work.
+      host: true,
       port: 5173,
       proxy: {
         "/api": {

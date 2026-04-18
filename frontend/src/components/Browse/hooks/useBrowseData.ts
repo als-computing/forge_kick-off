@@ -102,9 +102,12 @@ export function useBrowseData(serverUri: string, technique: string, serverApiKey
   // ------------------------------------------------------------------
   // API calls
   // ------------------------------------------------------------------
-  const loadFacets = useCallback(async () => {
+  const loadFacets = useCallback(async (options?: { silent?: boolean }) => {
     const { serverUri: su, technique: tq, serverApiKey: sk } = paramsRef.current;
-    setState((s) => ({ ...s, facetsLoading: true }));
+    const silent = Boolean(options?.silent);
+    if (!silent) {
+      setState((s) => ({ ...s, facetsLoading: true }));
+    }
     try {
       // 'All' can hit stale empty facet caches; force a refresh.
       const params: Record<string, string> = { technique: tq };
@@ -280,9 +283,11 @@ export function useBrowseData(serverUri: string, technique: string, serverApiKey
   // and re-poll facets periodically.
   // ------------------------------------------------------------------
   useEffect(() => {
-    loadFacets();
+    void loadFacets();
     setState((s) => ({ ...s, columns: [], items: [], itemsTotal: 0, selectedItem: null }));
-    const interval = setInterval(loadFacets, FACETS_POLL_INTERVAL_MS);
+    const interval = setInterval(() => {
+      void loadFacets({ silent: true });
+    }, FACETS_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [loadFacets, serverUri, technique, serverApiKey]);
 

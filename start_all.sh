@@ -380,6 +380,9 @@ export TILED_API_KEY
 # ---------------------------------------------------------------------------
 echo -e "${CYAN}==> Starting Tiled (port ${TILED_PORT})...${NC}"
 
+# Repair catalog asset paths in case the repo was moved or cloned to a new location.
+"$PYTHON" "$SCRIPT_DIR/backend/scripts/repair_catalog_paths.py"
+
 if [ ! -f "$TILED_CONFIG" ]; then
   echo -e "${RED}Error: missing $TILED_CONFIG${NC}"
   exit 1
@@ -463,7 +466,7 @@ if [ ! -d "node_modules" ]; then
   "${NPM_CMD[@]}" install
 fi
 
-"${NPM_CMD[@]}" run dev -- --host 127.0.0.1 --port "$FRONTEND_PORT" &
+"${NPM_CMD[@]}" run dev -- --host --port "$FRONTEND_PORT" &
 FRONTEND_PID=$!
 echo "$FRONTEND_PID" > "$FRONTEND_PID_FILE"
 echo -e "${GREEN}    Frontend PID: $FRONTEND_PID${NC}"
