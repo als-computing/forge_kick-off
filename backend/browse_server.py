@@ -20,6 +20,7 @@ import asyncio
 import json
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, Response
@@ -134,29 +135,43 @@ async def browse_facets(
         container, _ = get_browse_container(client)
         mapping = _resolve_field_mapping(container, server_uri or "", technique)
 
-        facets: list[str] = []
-        techniques_seen: list[str] = []
-        for disp_key in mapping.all_display_keys:
+        def _facet_for_key(disp_key: str) -> tuple[list[str], list[str]]:
             raw_key = mapping.display_to_raw.get(disp_key, disp_key)
             try:
                 result = container.distinct(raw_key, counts=True)
             except Exception:
-                continue
+                return [], []
             raw_values = result.get("metadata", {}).get(raw_key, [])
             non_null = [
                 v for v in raw_values
                 if v.get("value") is not None
                 and str(v["value"]).strip() not in ("", "None", "NaN", "nan")
             ]
+            facet_names: list[str] = []
             if len(non_null) >= 2:
-                facets.append(disp_key)
+                facet_names.append(disp_key)
+            tech_extra: list[str] = []
             if disp_key in ("technique", "scan_type"):
                 for v in non_null:
                     sv = str(v["value"]).strip()
-                    if sv and sv not in techniques_seen:
+                    if sv:
+                        tech_extra.append(sv)
+            return facet_names, tech_extra
+
+        keys = mapping.all_display_keys
+        max_workers = min(16, max(1, len(keys)))
+        facets: list[str] = []
+        techniques_seen: list[str] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = [pool.submit(_facet_for_key, dk) for dk in keys]
+            for fut in as_completed(futures):
+                facet_names, tech_extra = fut.result()
+                facets.extend(facet_names)
+                for sv in tech_extra:
+                    if sv not in techniques_seen:
                         techniques_seen.append(sv)
 
-        return {"facets": facets, "techniques": techniques_seen}
+        return {"facets": sorted(facets), "techniques": techniques_seen}
 
     try:
         return await asyncio.to_thread(_discover)
