@@ -1,20 +1,31 @@
 import { useState } from 'react';
-import { useNavigate, useLocation, Navigate } from 'react-router-dom';
+import { useNavigate, useLocation, Navigate } from 'react-router';
 import './App.css';
-import HubAppLayout from '@/components/HubAppLayout';
+//import HubAppLayout from '@/components/HubAppLayout';
+import { HubAppLayout, Tab } from '@blueskyproject/finch';
 import TabSelectorPage from './pages/TabSelectorPage';
 import { useHubSelectedTabs } from '@/hooks/useHubSelectedTabs';
-import { RouteItem } from '@/types/navigationRouterTypes';
-import { Browsers } from '@phosphor-icons/react';
+//import { RouteItem } from '@/types/navigationRouterTypes';
+import { RouteItem } from '@blueskyproject/finch';
+import { BrowsersIcon, GameControllerIcon } from '@phosphor-icons/react';
 import BrowsePage from './pages/BrowsePage';
+import ControlPage from './pages/ControlPage';
+import CustomizePages from '@/components/CustomizePages';
 
 const allRoutes: RouteItem[] = [
   {
     element: <BrowsePage />,
     path: '/browse',
     label: 'Browse',
-    icon: <Browsers size={32} />,
+    icon: <BrowsersIcon size={32} />,
   },
+  {
+    element: <ControlPage />,
+    path: '/control',
+    label: 'Control',
+    icon: <GameControllerIcon size={32} />,
+    isBackgroundTransparent: true,
+  }
 ];
 
 function App() {
@@ -54,10 +65,17 @@ function App() {
   }
 
   return (
-    <HubAppLayout
-      routes={filteredRoutes}
-      onOpenTabSelector={handleOpenTabSelector}
-    />
+    <>
+      <HubAppLayout
+        routes={filteredRoutes}
+        //onOpenTabSelector={handleOpenTabSelector}
+      />
+      <CustomizePages
+        routes={allRoutes}
+        selectedPaths={selectedPaths || []}
+        onSelectionChange={setSelectedPaths}
+      />
+    </>
   );
 }
 
